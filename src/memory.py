@@ -1,56 +1,112 @@
-import json
 import os
+import json
+import uuid
+from datetime import datetime
+import chromadb
+from chromadb.config import Settings
+from sentence_transformers import SentenceTransformer
 
-# Create a central directory for user memory storage
-PREFERENCE_DIR = os.getenv("PREFERENCE_DIR", "data")
-os.makedirs(PREFERENCE_DIR, exist_ok=True)
+# ===== File-based Preferences =====
+DATA_DIR = "data"
+os.makedirs(DATA_DIR, exist_ok=True)
 
 def get_user_file(user_id):
-    """Returns the full path to the user's preference file."""
-    return os.path.join(PREFERENCE_DIR, f"{user_id}.json")
+    return os.path.join(DATA_DIR, f"{user_id}.json")
 
 def load_preferences(user_id):
-    """Load user preferences from JSON file. Returns empty dict if not found or corrupt."""
     file_path = get_user_file(user_id)
-    if not os.path.exists(file_path):
-        return {}
-    try:
+    if os.path.exists(file_path):
         with open(file_path, 'r') as f:
             return json.load(f)
-    except json.JSONDecodeError:
-        print(f"[Warning] Corrupt memory file for {user_id}. Returning empty.")
-        return {}
+    return {}
 
 def save_preferences(user_id, preferences):
-    """Save the full user preferences dictionary to disk."""
     file_path = get_user_file(user_id)
     with open(file_path, 'w') as f:
         json.dump(preferences, f, indent=2)
 
 def update_preference(user_id, key, value):
-    """Update a specific key in the user's preferences."""
     prefs = load_preferences(user_id)
     prefs[key] = value
     save_preferences(user_id, prefs)
 
-def get_preference(user_id, key, default=None):
-    """Get a single preference value with an optional fallback."""
-    prefs = load_preferences(user_id)
-    return prefs.get(key, default)
-
-def clean_preferences(user_id, allowed_keys):
-    """Remove any preferences not in the allowed list (e.g., if structure changed)."""
-    prefs = load_preferences(user_id)
-    cleaned = {k: v for k, v in prefs.items() if k in allowed_keys}
-    save_preferences(user_id, cleaned)
-
 def format_preferences_for_prompt(user_id):
-    """Convert user preferences into natural language text for Gemini prompt."""
     prefs = load_preferences(user_id)
-    return f"""
-    User's Past Preferences:
-    - Destination: {prefs.get('destination', 'Not specified')}
-    - Interests: {prefs.get('interests', 'Not specified')}
-    - Budget: {prefs.get('budget', 'Not specified')}
-    - Style: {prefs.get('style', 'Not specified')}
+    if not prefs:
+        return "No preferences saved."
+    return "\n".join(f"{k.capitalize()}: {v}" for k, v in prefs.items())
+
+# ===== Vector-Based Memory (Semantic) =====
+client = chromadb.Client(Settings(persist_directory="./vector_store", chroma_db_impl="duckdb+parquet"))
+collection = client.get_or_create_collection("memory")
+model = SentenceTransformer("all-MiniLM-L6-v2")
+
+def add_memory(user_id: str, text: str):
+    """Add a memory entry (text) with timestamp for a user."""
+    timestamp = datetime.now().isoformat()
+    embedding = model.encode(text).tolist()
+    memory_id = f"{user_id}_{uuid.uuid4()}"
+    metadata = {"user_id": user_id, "timestamp": timestamp}
+    collection.add(
+        documents=[text],
+        embeddings=[embedding],
+        metadatas=[metadata],
+        ids=[memory_id]
+    )
+
+def query_memory(query: str, top_k=3, after_date: str = None):
     """
+    Query vector memory for top-k similar documents.
+    Optionally filter by timestamp (ISO format 'YYYY-MM-DDTHH:MM:SS').
+    """
+    embedding = model.encode(query).tolist()
+    results = collection.query(query_embeddings=[embedding], n_results=top_k)
+    docs = results["documents"][0] if results["documents"] else []
+    metas = results["metadatas"][0] if results.get("metadatas") else []
+
+    if after_date:
+        after_dt = datetime.fromisoformat(after_date)
+        docs = [
+            doc for doc, meta in zip(docs, metas)
+            if datetime.fromisoformat(meta["timestamp"]) > after_dt
+        ]
+
+    return docs
+
+def format_memory_snippets_for_prompt(query: str, top_k=3, after_date: str = None):
+    snippets = query_memory(query, top_k=top_k, after_date=after_date)
+    if not snippets:
+        return "No related memory found."
+    return "\n".join(f"• {s}" for s in snippets)
+
+def reset_user_memory(user_id: str):
+    """Remove all vector memory entries related to a specific user."""
+    all_ids = collection.peek()["ids"]
+    user_ids = [id for id in all_ids if id.startswith(f"{user_id}_")]
+    if user_ids:
+        collection.delete(ids=user_ids)
+
+# ===== Export / Import Memory =====
+def export_memory_to_json(filepath="memory_export.json"):
+    """Export entire memory collection to a JSON file."""
+    data = collection.peek()
+    records = [
+        {"id": id, "text": doc, "metadata": meta}
+        for id, doc, meta in zip(data["ids"], data["documents"], data["metadatas"])
+    ]
+    with open(filepath, "w") as f:
+        json.dump(records, f, indent=2)
+    return filepath
+
+def import_memory_from_json(filepath="memory_export.json"):
+    """Import memory entries from a JSON file into the collection."""
+    with open(filepath, "r") as f:
+        records = json.load(f)
+    for r in records:
+        embedding = model.encode(r["text"]).tolist()
+        collection.add(
+            documents=[r["text"]],
+            embeddings=[embedding],
+            ids=[r["id"]],
+            metadatas=[r["metadata"]]
+        )
