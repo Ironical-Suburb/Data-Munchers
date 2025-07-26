@@ -22,3 +22,4 @@ Below, sketch (ASCII, hand-drawn JPEG/PNG pasted in, or ASCII art) the high-leve
    - Logging of each reasoning step  
    - Error handling / retries  
 
+![Uploading ARCHITECTURE.JPG…]()
