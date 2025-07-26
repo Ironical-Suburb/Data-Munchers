@@ -1,6 +1,9 @@
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
+import google.generativeai as genai
+import os
+
 from src.memory import (
     load_preferences,
     update_preference,
@@ -10,6 +13,10 @@ from src.memory import (
 )
 from src.planner import plan_travel
 from src.executor import run_tasks
+
+# Configure Gemini
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))  # Set your API key in env or replace directly
+model = genai.GenerativeModel("gemini-pro")
 
 app = FastAPI()
 
@@ -30,16 +37,16 @@ async def send_streamed_response(websocket: WebSocket, text: str, delay: float =
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     await websocket.send_text("👋 Hi there! I'm your AI Travel Assistant. What's your user ID?")
-
     user_id = await websocket.receive_text()
-    prefs = load_preferences(user_id)
 
+    prefs = load_preferences(user_id)
     if prefs:
         message = "🧠 Loaded your preferences:\n" + "\n".join([f"- {k.capitalize()}: {v}" for k, v in prefs.items()])
     else:
         message = "No preferences found. Let's create them."
     await websocket.send_text(message)
 
+    # Step-by-step preference collection
     await websocket.send_text("📍 Where do you want to go?")
     destination = await websocket.receive_text()
 
@@ -55,14 +62,13 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.send_text("🧳 What's your travel style (relaxed, adventure, cultural)?")
     style = await websocket.receive_text()
 
-    # Save to file-based preference memory
+    # Save to memory
     update_preference(user_id, "destination", destination)
     update_preference(user_id, "days", days)
     update_preference(user_id, "interests", interests)
     update_preference(user_id, "budget", budget)
     update_preference(user_id, "style", style)
 
-    # Query semantic memory
     context_snippets = query_memory(destination)
     if context_snippets:
         await websocket.send_text("📚 I found some related past memories:")
@@ -71,7 +77,6 @@ async def websocket_endpoint(websocket: WebSocket):
 
     await websocket.send_text("🛠 Planning your trip now...")
 
-    # Format preferences and generate plan
     memory_text = format_preferences_for_prompt(user_id)
     tasks = plan_travel(destination, days, interests)
 
@@ -85,7 +90,25 @@ async def websocket_endpoint(websocket: WebSocket):
     )
 
     await send_streamed_response(websocket, f"🗺️ Here’s your personalized itinerary:\n\n{result}")
-
-    # Add to semantic memory
     add_memory(user_id, f"Planned trip to {destination} for {days} days: {interests}, {style}, {budget}")
     await websocket.send_text("\n✅ Trip plan complete!")
+    await websocket.send_text("💬 You can now ask me any other questions or get more info!")
+
+    # Fallback chat loop
+    while True:
+        try:
+            user_msg = await websocket.receive_text()
+            if not user_msg.strip():
+                continue
+
+            await websocket.send_text("🤖 Thinking...")
+
+            gemini_response = model.generate_content(user_msg)
+            reply = gemini_response.text.strip()
+
+            add_memory(user_id, user_msg, reply)  # Optional
+            await send_streamed_response(websocket, reply)
+
+        except Exception as e:
+            await websocket.send_text(f"⚠️ Error: {str(e)}")
+            break
