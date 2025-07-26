@@ -3,6 +3,7 @@ import os
 import time
 import requests
 import google.generativeai as genai
+from datetime import datetime
 
 # Load environment variables
 load_dotenv()
@@ -36,7 +37,6 @@ Other Info: {memory_text}
 
 Tasks:
 """
-
     results = []
     for i, task in enumerate(tasks, 1):
         combined_task = full_prompt + f"\nTask {i}:\n{task}"
@@ -52,9 +52,7 @@ def get_destination_id(location):
         "X-RapidAPI-Key": os.getenv("RAPIDAPI_KEY"),
         "X-RapidAPI-Host": "booking-com15.p.rapidapi.com"
     }
-    params = {
-        "query": location
-    }
+    params = {"query": location}
 
     response = requests.get(url, headers=headers, params=params)
     response.raise_for_status()
@@ -62,7 +60,6 @@ def get_destination_id(location):
     data = response.json()
     print("Location API response:", data)
 
-    # Find first valid destination with dest_id
     for item in data.get("data", []):
         if "dest_id" in item:
             return item["dest_id"]
@@ -70,15 +67,33 @@ def get_destination_id(location):
     raise ValueError(f"No destination ID found in response for location: {location}")
 
 
+def get_airport_code(city_name):
+    url = "https://booking-com15.p.rapidapi.com/api/v1/flights/searchDestination"
+    headers = {
+        "X-RapidAPI-Key": os.getenv("RAPIDAPI_KEY"),
+        "X-RapidAPI-Host": "booking-com15.p.rapidapi.com"
+    }
+    params = {"query": city_name}
+
+    response = requests.get(url, headers=headers, params=params)
+    response.raise_for_status()
+    data = response.json()
+    print("Flight location API response:", data)
+
+    for item in data.get("data", []):
+        if item.get("id", "").endswith(".AIRPORT") or item.get("id", "").endswith(".CITY"):
+            return item["id"]
+
+    raise ValueError(f"No airport/city code found for: {city_name}")
+
+
 def fetch_hotels(location, checkin, checkout):
     dest_id = get_destination_id(location)
-
     url = "https://booking-com15.p.rapidapi.com/api/v1/hotels/searchHotels"
     headers = {
         "X-RapidAPI-Key": os.getenv("RAPIDAPI_KEY"),
         "X-RapidAPI-Host": "booking-com15.p.rapidapi.com"
     }
-
     params = {
         "dest_id": dest_id,
         "search_type": "CITY",
@@ -95,50 +110,63 @@ def fetch_hotels(location, checkin, checkout):
     response = requests.get(url, headers=headers, params=params)
     response.raise_for_status()
     data = response.json()
+    hotels_raw = data.get("data", {}).get("hotels", [])
+
+    checkin_date = datetime.strptime(checkin, "%Y-%m-%d")
+    checkout_date = datetime.strptime(checkout, "%Y-%m-%d")
+    nights = (checkout_date - checkin_date).days
 
     hotels = []
-    for hotel in data.get("data", {}).get("hotels", [])[:3]:
+    for hotel in hotels_raw[:3]:
+        price_per_night = hotel.get("priceBreakdown", {}).get("grossPrice", {}).get("value", 0)
+        total_price = round(price_per_night * nights, 2)
+
         hotels.append({
             "name": hotel.get("accessibilityLabel", "N/A"),
-            "price": hotel.get("priceBreakdown", {}).get("grossPrice", {}).get("value", "N/A"),
-            "photo": hotel.get("photoUrls", ["N/A"])[0],
-            "score": hotel.get("property", {}).get("reviewScoreWord", "N/A")
+            "price_per_night": price_per_night,
+            "total_price": total_price,
+            "photo": hotel.get("photoUrls", [""])[0],
+            "score": hotel.get("property", {}).get("reviewScoreWord", "N/A"),
+            "address": hotel.get("property", {}).get("address", {}).get("addressLine", "N/A"),
+            "link": hotel.get("property", {}).get("url", "")
         })
 
     return hotels
 
 
-def fetch_flights(origin, destination, departure_date):
-    url = "https://skyscanner44.p.rapidapi.com/search-extended"
+def fetch_flights(origin_city, dest_city):
+    origin_code = get_airport_code(origin_city)
+    dest_code = get_airport_code(dest_city)
 
-    querystring = {
-        "origin": origin,
-        "destination": destination,
-        "departureDate": departure_date,
-        "currency": "USD",
-        "adults": "1",
-        "stops": "0"
-    }
-
+    url = "https://booking-com15.p.rapidapi.com/api/v1/flights/searchFlights"
     headers = {
         "X-RapidAPI-Key": os.getenv("RAPIDAPI_KEY"),
-        "X-RapidAPI-Host": "skyscanner44.p.rapidapi.com"
+        "X-RapidAPI-Host": "booking-com15.p.rapidapi.com"
+    }
+    params = {
+        "fromId": origin_code,
+        "toId": dest_code,
+        "stops": "none",
+        "pageNo": "1",
+        "adults": "1",
+        "sort": "BEST",
+        "cabinClass": "ECONOMY",
+        "currency_code": "USD"
     }
 
-    response = requests.get(url, headers=headers, params=querystring)
+    response = requests.get(url, headers=headers, params=params)
+    response.raise_for_status()
     data = response.json()
+    print("Flight search API response:", data)
 
     flights = []
-    for f in data.get("itineraries", [])[:3]:
-        flight_info = f["legs"][0]
+    for item in data.get("data", [])[:3]:
         flights.append({
-            "airline": flight_info.get("carriers", [{}])[0].get("name", "N/A"),
-            "from": flight_info.get("origin", {}).get("name"),
-            "to": flight_info.get("destination", {}).get("name"),
-            "departure": flight_info.get("departure"),
-            "arrival": flight_info.get("arrival"),
-            "duration": flight_info.get("duration"),
-            "price": f.get("price", {}).get("raw")
+            "airline": item.get("airline", "N/A"),
+            "from": item.get("origin", "N/A"),
+            "to": item.get("destination", "N/A"),
+            "departure": item.get("departureDate", "N/A"),
+            "price": item.get("price", 0),
+            "deeplink": item.get("deeplink", "")
         })
-
     return flights
