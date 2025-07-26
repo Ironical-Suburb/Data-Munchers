@@ -1,37 +1,44 @@
-from src.memory import load_preferences, update_preference
-from src.planner import plan_travel  
-from src.executor import run_tasks   
+from src.planner import plan_travel
+from src.executor import run_tasks
+from src.memory import format_preferences_for_prompt, update_preference
 
 def main():
-    print("Welcome to your AI Travel Assistant!\n")
-    user_id = input("Enter your user ID: ").strip()
+    print("🧪 Travel Planner CLI Test Mode\n")
 
-    # Load saved preferences
-    prefs = load_preferences(user_id)
-    if prefs:
-        print("\nLoaded your travel preferences:")
-        for key, val in prefs.items():
-            print(f"- {key}: {val}")
-    else:
-        print("\nNo preferences found. Let's set them up!")
+    user_id = input("👤 Enter test user ID: ").strip()
 
-    # Get user input
-    destination = input("\nWhere do you want to travel? ")
-    days = input("How many days is your trip? ")
-    interests = input("What are your interests (e.g., history, food, art)? ")
+    # Collect preferences
+    destination = input("📍 Destination: ").strip()
+    days = input("📅 How many days? ").strip()
+    interests = input("🎯 Interests (comma-separated): ").strip()
+    budget = input("💰 Budget (low, medium, high): ").strip()
+    style = input("🧳 Travel style (relaxed, adventure, cultural): ").strip()
 
-    # Save new input as preferences
+    # Save preferences just like the chat backend
     update_preference(user_id, "destination", destination)
     update_preference(user_id, "days", days)
     update_preference(user_id, "interests", interests)
+    update_preference(user_id, "budget", budget)
+    update_preference(user_id, "style", style)
 
-    # Plan the trip and get results
+    # Plan the trip
     tasks = plan_travel(destination, days, interests)
-    result = run_tasks(tasks, destination, days, interests, prefs)
 
-    print("\n====== Your Personalized Itinerary ======\n")
+    # Load memory context
+    memory_text = format_preferences_for_prompt(user_id)
+
+    # Run task execution
+    result = run_tasks(
+        tasks=tasks,
+        destination=destination,
+        days=days,
+        interests=interests,
+        budget=budget,
+        memory_text=memory_text
+    )
+
+    print("\n🗺️ Final Itinerary:\n")
     print(result)
-    print("\n=========================================")
 
-if _name_ == "_main_":
+if __name__ == "__main__":
     main()
