@@ -1,4 +1,4 @@
-Must run this command:
+Install backend dependencies (Must run command):
 pip install -r requirements.txt
 
 # Agentic AI App Hackathon Template
