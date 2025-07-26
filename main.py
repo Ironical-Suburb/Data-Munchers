@@ -3,32 +3,32 @@ from src.executor import fetch_hotels, fetch_flights, execute_task
 from src.planner import plan_travel
 from datetime import datetime
 
-def needs_more_info(prefs):
-    required = ["departure_city", "destination", "departure_date", "return_date", "interests", "budget"]
-    return not all(prefs.get(k) for k in required)
+def build_prompt(prefs, remaining_budget, hotel_info, flight_info):
+    return f"""
+You are a travel expert. Please create a personalized itinerary for the following user preferences:
 
-def build_prompt(prefs):
-    return plan_travel(
-        prefs["destination"],
-        prefs["days"] if "days" in prefs else "a few",
-        prefs["interests"],
-        prefs["budget"]
-    )
+Destination: {prefs['destination']}
+Days: {prefs['days']}
+Interests: {prefs['interests']}
+Total Budget: ${prefs['budget']}
+Hotel Cost: ${prefs['hotel_total']}
+Flight Cost: ${prefs['flight_total']}
+Remaining Budget: ${remaining_budget}
+
+Hotel Options:
+{hotel_info}
+
+Flight Options:
+{flight_info}
+
+Plan activities, food, transport, and entertainment such that it fits within the remaining budget of ${remaining_budget}. Avoid mentioning hotel or flight costs again.
+"""
 
 def main():
     print("🌍 Welcome to your AI Travel Assistant!\n")
     user_id = input("Enter your user ID: ").strip()
 
-    # Load previous preferences
-    prefs = load_preferences(user_id)
-    if prefs:
-        print("🧠 Loaded previous preferences:")
-        for k, v in prefs.items():
-            print(f"- {k}: {v}")
-    else:
-        prefs = {}
-
-    # Prompt user for missing inputs
+    prefs = load_preferences(user_id) or {}
     fields = {
         "departure_city": "Departure city",
         "destination": "Destination",
@@ -43,7 +43,6 @@ def main():
             prefs[key] = input(f"{label}: ").strip()
             update_preference(user_id, key, prefs[key])
 
-    # Auto-calculate days
     try:
         d1 = datetime.strptime(prefs["departure_date"], "%Y-%m-%d")
         d2 = datetime.strptime(prefs["return_date"], "%Y-%m-%d")
@@ -51,41 +50,45 @@ def main():
     except Exception:
         prefs["days"] = "a few"
 
-    # Generate base prompt
-    full_prompt = build_prompt(prefs)
-
-    # Fetch hotel options
+    # 🏨 Fetch hotels
     hotels = fetch_hotels(
         location=prefs["destination"],
         checkin=prefs["departure_date"],
         checkout=prefs["return_date"]
     )
+    prefs["hotel_total"] = hotels[0]["total_price"] if hotels else 0
 
-    if hotels:
-        hotel_info = "\n".join([
-            f"- {h['name']}, ${h['price']} per night, {h['address']}, Score: {h['review_score']}"
-            for h in hotels
-        ])
-        full_prompt += f"\n\n📍 Hotel Options:\n{hotel_info}"
+    hotel_info = "\n".join([
+        f"- {h['name']} | ${h['total_price']} total (${h['price_per_night']}/night) | Score: {h['score']} | [View Hotel]({h['link']})"
+        for h in hotels
+    ]) if hotels else "No hotels found."
 
-    # Fetch flight options
+    # ✈️ Fetch flights
     flights = fetch_flights(
-        origin=prefs["departure_city"],
-        destination=prefs["destination"],
-        departure_date=prefs["departure_date"]
+        prefs["departure_city"],
+        prefs["destination"]
     )
+    prefs["flight_total"] = flights[0]["price"] if flights else 0
 
-    if flights:
-        flight_info = "\n".join([
-            f"- {f['airline']}: {f['from']} ➜ {f['to']} | Departure: {f['departure']} | Price: ${f['price']}"
-            for f in flights
-        ])
-        full_prompt += f"\n\n✈️ Flight Options:\n{flight_info}"
+    flight_info = "\n".join([
+        f"- {f['airline']} | {f['from']} ➜ {f['to']} | Departure: {f['departure']} | ${f['price']} | [Book Flight]({f['deeplink']})"
+        for f in flights
+    ]) if flights else "No flights found."
 
-    # Execute Gemini task
+    # 🧮 Remaining budget
+    total_budget = float(prefs["budget"])
+    flight_cost = float(prefs["flight_total"])
+    hotel_cost = float(prefs["hotel_total"])
+    remaining_budget = round(total_budget - flight_cost - hotel_cost, 2)
+
+    if remaining_budget <= 0:
+        print("⚠️ Your flight and hotel costs exceed or consume your budget. Please adjust your budget or travel dates.")
+        return
+
+    full_prompt = build_prompt(prefs, remaining_budget, hotel_info, flight_info)
+
     print("\n🧠 Generating itinerary...\n")
     itinerary = execute_task(full_prompt)
-
     print("\n🗺️ Your Personalized Itinerary:\n")
     print(itinerary)
 
