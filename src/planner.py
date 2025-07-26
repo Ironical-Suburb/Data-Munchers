@@ -7,11 +7,7 @@ def plan_itinerary(location, days, interests, budget):
         f"Give 3 travel safety tips or cultural dos/don’ts for visiting {location}. Be specific and up-to-date."
     ]
 
-''' Test block to see if the function prints correctly
-
-if __name__ == "__main__":
-    tasks = plan_itinerary("Rome", 3, "history", 1000)
-    for t in tasks:
-        print("-", t)
-
-'''
+def plan_travel(destination, days, interests):
+    # Assume default budget for compatibility
+    default_budget = "1000"
+    return plan_itinerary(destination, days, interests, default_budget)
