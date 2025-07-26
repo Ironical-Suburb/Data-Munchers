@@ -1,0 +1,7 @@
+google-generativeai
+python-dotenv
+requests
+fastapi
+uvicorn
+chromadb
+sentence_transformers
