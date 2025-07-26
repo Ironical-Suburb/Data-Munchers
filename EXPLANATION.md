@@ -30,6 +30,7 @@ Describe step-by-step how your agent processes an input:
 - **Planner** (`planner.py`): Handles goal decomposition and prompt engineering. Calls run_tasks() from executor.py with a structured prompt for Gemini.
 - **Executor** (`executor.py`): Executes tasks step-by-step using Gemini Flash. Integrates hotel/flight APIs, processes results, and combines them with LLM output.
 - **Memory Store** (`memory.py`): Implements persistent storage for user history. Remembers previous destinations and preferences for personalization.
+- **Main** (`main.py`): Collects user input, loads memory, calls planner and executor modules, and displays the final itinerary. Acts as the entry point for CLI usage.
 
 ## 3. Tool Integration
 
@@ -52,5 +53,4 @@ Be honest about edge cases or performance bottlenecks:
 - Booking.com API rate limits can block hotel/flight search, requiring retries or mocking fallback.
 - If user submits an invalid or ambiguous city name, destination ID lookup may fail.
 - Although Gemini is guided with structured prompts, occasional overconfident or off-topic answers can appear.
-- Memory is session-based and not tied to persistent user identity.
 
