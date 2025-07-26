@@ -58,7 +58,7 @@ def get_destination_id(location):
     response.raise_for_status()
 
     data = response.json()
-    print("Location API response:", data)
+    #print("Location API response:", data)
 
     for item in data.get("data", []):
         if "dest_id" in item:
@@ -78,11 +78,15 @@ def get_airport_code(city_name):
     response = requests.get(url, headers=headers, params=params)
     response.raise_for_status()
     data = response.json()
-    print("Flight location API response:", data)
+    #print("Flight location API response:", data)
 
     for item in data.get("data", []):
-        if item.get("id", "").endswith(".AIRPORT") or item.get("id", "").endswith(".CITY"):
-            return item["id"]
+        item_id = item.get("id", "")
+        if item_id.endswith(".AIRPORT") or item_id.endswith(".CITY"):
+            # Assemble full code
+            country_code = item.get("country", "")
+            full_code = f"{country_code}.{item_id}"
+            return full_code
 
     raise ValueError(f"No airport/city code found for: {city_name}")
 
