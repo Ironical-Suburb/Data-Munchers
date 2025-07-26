@@ -7,7 +7,8 @@ def plan_itinerary(location, days, interests, budget):
         f"Give 3 travel safety tips or cultural dos/don’ts for visiting {location}. Be specific and up-to-date."
     ]
 
-def plan_travel(destination, days, interests):
-    # Assume default budget for compatibility
-    default_budget = "1000"
-    return plan_itinerary(destination, days, interests, default_budget)
+def plan_travel(destination, days, interests, budget):
+    return f"""
+    Plan a {days}-day trip to {destination} focused on {interests} within a budget of ${budget}.
+    Provide a detailed day-by-day itinerary including morning, afternoon, and evening activities.
+    """
