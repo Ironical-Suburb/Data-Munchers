@@ -1,8 +1,9 @@
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 import asyncio
-import google.generativeai as genai
 import os
+import google.generativeai as genai
+from datetime import datetime
 
 from src.memory import (
     load_preferences,
@@ -14,10 +15,17 @@ from src.memory import (
 from src.planner import plan_travel
 from src.executor import run_tasks
 
-# Configure Gemini
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))  # Set your API key in env or replace directly
+# ===== Gemini Config =====
+genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 model = genai.GenerativeModel("gemini-pro")
 
+# ===== User Credentials (Basic Demo Login) =====
+USER_CREDENTIALS = {
+    "priyanshu": "secret123",
+    "guest": "letmein"
+}
+
+# ===== App Config =====
 app = FastAPI()
 
 app.add_middleware(
@@ -29,6 +37,7 @@ app.add_middleware(
 )
 
 async def send_streamed_response(websocket: WebSocket, text: str, delay: float = 0.03):
+    """Send response word-by-word with typing effect."""
     for token in text.split():
         await websocket.send_text(token + " ")
         await asyncio.sleep(delay)
@@ -36,9 +45,23 @@ async def send_streamed_response(websocket: WebSocket, text: str, delay: float =
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    await websocket.send_text("👋 Hi there! I'm your AI Travel Assistant. What's your user ID?")
-    user_id = await websocket.receive_text()
 
+    # Step 1: Login
+    await websocket.send_text("👋 Hi there! I'm your AI Travel Assistant.")
+    await websocket.send_text("👤 Please enter your username:")
+    username = await websocket.receive_text()
+
+    await websocket.send_text("🔒 Please enter your password:")
+    password = await websocket.receive_text()
+
+    if username not in USER_CREDENTIALS or USER_CREDENTIALS[username] != password:
+        await websocket.send_text("❌ Invalid credentials. Connection closing.")
+        await websocket.close()
+        return
+
+    user_id = username
+
+    # Step 2: Load Preferences
     prefs = load_preferences(user_id)
     if prefs:
         message = "🧠 Loaded your preferences:\n" + "\n".join([f"- {k.capitalize()}: {v}" for k, v in prefs.items()])
@@ -46,7 +69,7 @@ async def websocket_endpoint(websocket: WebSocket):
         message = "No preferences found. Let's create them."
     await websocket.send_text(message)
 
-    # Step-by-step preference collection
+    # Step 3: Collect Preferences
     await websocket.send_text("📍 Where do you want to go?")
     destination = await websocket.receive_text()
 
@@ -62,13 +85,14 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.send_text("🧳 What's your travel style (relaxed, adventure, cultural)?")
     style = await websocket.receive_text()
 
-    # Save to memory
+    # Save preferences
     update_preference(user_id, "destination", destination)
     update_preference(user_id, "days", days)
     update_preference(user_id, "interests", interests)
     update_preference(user_id, "budget", budget)
     update_preference(user_id, "style", style)
 
+    # Step 4: Query Memory
     context_snippets = query_memory(destination)
     if context_snippets:
         await websocket.send_text("📚 I found some related past memories:")
@@ -77,6 +101,7 @@ async def websocket_endpoint(websocket: WebSocket):
 
     await websocket.send_text("🛠 Planning your trip now...")
 
+    # Step 5: Generate Itinerary
     memory_text = format_preferences_for_prompt(user_id)
     tasks = plan_travel(destination, days, interests)
 
@@ -92,9 +117,9 @@ async def websocket_endpoint(websocket: WebSocket):
     await send_streamed_response(websocket, f"🗺️ Here’s your personalized itinerary:\n\n{result}")
     add_memory(user_id, f"Planned trip to {destination} for {days} days: {interests}, {style}, {budget}")
     await websocket.send_text("\n✅ Trip plan complete!")
-    await websocket.send_text("💬 You can now ask me any other questions or get more info!")
+    await websocket.send_text("💬 You can now ask me anything else!")
 
-    # Fallback chat loop
+    # Step 6: Open-ended Gemini Chat
     while True:
         try:
             user_msg = await websocket.receive_text()
@@ -103,11 +128,31 @@ async def websocket_endpoint(websocket: WebSocket):
 
             await websocket.send_text("🤖 Thinking...")
 
-            gemini_response = model.generate_content(user_msg)
-            reply = gemini_response.text.strip()
+            # Inject memory into prompt
+            memory_context = "\n".join(f"• {m}" for m in query_memory(user_msg))
+            gemini_prompt = f"""
+You're a helpful travel assistant. Use the following memory if relevant:
 
-            add_memory(user_id, user_msg, reply)  # Optional
+{memory_context if memory_context else 'No previous memory available.'}
+
+User message: {user_msg}
+"""
+
+            # Retry-safe Gemini call
+            reply = ""
+            for attempt in range(3):
+                try:
+                    gemini_response = model.generate_content(gemini_prompt)
+                    reply = gemini_response.text.strip()
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        reply = f"⚠️ Gemini failed after 3 attempts: {e}"
+                    else:
+                        await asyncio.sleep(1)
+
             await send_streamed_response(websocket, reply)
+            add_memory(user_id, f"User asked: {user_msg}\nReply: {reply}")
 
         except Exception as e:
             await websocket.send_text(f"⚠️ Error: {str(e)}")
