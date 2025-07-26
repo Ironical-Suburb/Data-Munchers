@@ -1,3 +1,6 @@
+Must run this command:
+pip install -r requirements.txt
+
 # Agentic AI App Hackathon Template
 
 Welcome! This repository is your starting point for the **Agentic AI App Hackathon**. It includes:
